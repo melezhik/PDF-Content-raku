@@ -1,7 +1,42 @@
-use PDF::Content::Ops :OpCode, :GraphicsContext, :ExtGState, :Vector;
+#| PDF Content construction and manipulation
+class PDF::Content:ver<0.7.3> {
 
-class PDF::Content:ver<0.6.5>
-    is PDF::Content::Ops {
+    use PDF::Content::Ops :OpCode, :GraphicsContext, :ExtGState;
+    also is PDF::Content::Ops;
+
+=begin pod
+
+=head2 Description
+
+implements a PDF graphics state machine for composition, or rendering:
+
+=head2 Synposis
+
+=begin code :lang<raku>
+use lib 't';
+use PDF::Content;
+use PDF::Content::Canvas;
+use PDFTiny;
+my PDFTiny $pdf .= new;
+my PDF::Content::Canvas $canvas = $pdf.add-page;
+my PDF::Content $gfx .= new: :$canvas;
+$gfx.use-font: $pdf.core-font('Courier'); # define /F1 font
+$gfx.BeginText;
+$gfx.Font = 'F1', 16;
+$gfx.TextMove(10, 20);
+$gfx.ShowText('Hello World');
+$gfx.EndText;
+say $gfx.Str;
+# BT
+#  /F1 16 Tf
+#  10 20 Td
+#  (Hello World) Tj
+# ET
+=end code
+
+=head2 Methods
+
+=end pod
 
     use PDF::COS;
     use PDF::COS::Stream;
@@ -9,7 +44,10 @@ class PDF::Content:ver<0.6.5>
     use PDF::Content::Text::Block; # deprecated
     use PDF::Content::XObject;
     use PDF::Content::Tag :ParagraphTags;
+    use PDF::Content::Font;
+    use PDF::Content::Font::CoreFont;
     use PDF::Content::FontObj;
+    use are;
 
     has Str $.actual-text is rw;
 
@@ -18,17 +56,20 @@ class PDF::Content:ver<0.6.5>
     my subset XPos-Pair of Pair where {.key ~~ Align && .value ~~ Numeric}
     my subset YPos-Pair of Pair where {.key ~~ Valign && .value ~~ Numeric}
     my subset Position of List where { .elems <= 2 }
+    my subset Vector of Position  where { .&are ~~ Numeric }
 
+    #| Add a graphics block
     method graphics( &meth! ) {
         $.op(Save);
-        my \rv = meth(self);
+        my \rv = self.&meth();
         $.op(Restore);
         rv;
     }
 
+    #| Add a text block
     method text( &meth! ) {
         $.op(BeginText);
-        my \rv = meth(self);
+        my \rv = self.&meth();
         $.op(EndText);
         return rv;
     }
@@ -48,7 +89,8 @@ class PDF::Content:ver<0.6.5>
         }
     }
 
-    method mark(Str $t, &meth, |c) { self.tag($t, &meth, :mark, |c) }
+    #| Add a marked content block
+    method mark(Str $t, &meth, |c --> PDF::Content::Tag) { self.tag($t, &meth, :mark, |c) }
 
     multi method tag(PDF::Content::Tag $_, &meth) {
         samewith( .tag, &meth, |.attributes, );
@@ -58,7 +100,8 @@ class PDF::Content:ver<0.6.5>
         samewith( .tag, |.attributes);
     }
 
-    multi method tag(Str $tag, Bool :$mark, *%props) {
+    #| Add an empty content tag, optionally marked
+    multi method tag(Str $tag, Bool :$mark, *%props --> PDF::Content::Tag) {
         self!setup-mcid: :$mark, :%props;
         %props
             ?? $.MarkPointDict($tag, $%props)
@@ -66,12 +109,13 @@ class PDF::Content:ver<0.6.5>
         $.closed-tag;
     }
 
-    multi method tag(Str $tag, &meth!, Bool :$mark, *%props) {
+    #| Add tagged content, optionally marked
+    multi method tag(Str $tag, &meth!, Bool :$mark, *%props --> PDF::Content::Tag) {
         self!setup-mcid: :$mark, :%props;
         %props
             ?? $.BeginMarkedContentDict($tag, $%props)
             !! $.BeginMarkedContent($tag);
-        meth(self);
+        self.&meth();
         $.EndMarkedContent;
         $.closed-tag;
     }
@@ -99,36 +143,39 @@ class PDF::Content:ver<0.6.5>
         $!tagger //= Tagger.new: :gfx(self);
     }
 
-    method load-image($spec) {
+    #| Open an image from a file-spec or data-uri
+    method load-image($spec --> PDF::Content::XObject) {
         PDF::Content::XObject.open($spec);
     }
 
     #| extract any inline images from the content stream. returns an array of XObject Images
-    method inline-images returns Array {
-	my PDF::Content::XObject @images;
-	for $.ops.keys.grep: { $.ops[$_].key eq 'BI' } -> $i {
-	    my $bi = $.ops[$i];
-	    my $id = $.ops[$i+1];
-	    die "'BI' op not followed by 'ID' in content stream"
-		unless $id ~~ Pair && $id.key eq 'ID';
+    method inline-images returns Array[PDF::Content::XObject] {
+        my PDF::Content::XObject @images;
+        for $.ops.keys.grep: { $.ops[$_].key eq 'BI' } -> $i {
+            my $bi = $.ops[$i];
+            my $id = $.ops[$i+1];
+            die "'BI' op not followed by 'ID' in content stream"
+                unless $id ~~ Pair && $id.key eq 'ID';
 
-	    my %dict = PDF::Content::XObject['Image'].inline-to-xobject($bi.value[0]<dict>);
-	    my $encoded = $id.value[0]<encoded>;
+            my %dict = PDF::Content::XObject['Image'].inline-to-xobject($bi.value[0]<dict>);
+            my $encoded = $id.value[0]<encoded>;
 
-	    @images.push: PDF::COS::Stream.COERCE: { :%dict, :$encoded };
-	}
-	@images;
+            @images.push: PDF::COS::Stream.COERCE: { :%dict, :$encoded };
+        }
+        @images;
     }
 
     use PDF::Content::Matrix :transform;
+    #| perform a series of graphics transforms
     method transform( |c ) {
-	my Numeric @matrix = transform( |c );
-	$.ConcatMatrix( @matrix );
+        my Numeric @matrix = transform( |c );
+        $.ConcatMatrix( @matrix );
     }
 
+    #| perform a series of text transforms
     method text-transform( |c ) {
-	my Numeric @matrix = transform( |c );
-	$.SetTextMatrix( @matrix );
+        my Numeric @matrix = transform( |c );
+        $.SetTextMatrix( @matrix );
     }
 
     #| place an image, or form object
@@ -139,6 +186,7 @@ class PDF::Content:ver<0.6.5>
               Numeric  :$width is copy,
               Numeric  :$height is copy,
               Bool     :$inline = False,
+              --> List
         )  {
 
         my Numeric ($x, $y);
@@ -199,12 +247,14 @@ class PDF::Content:ver<0.6.5>
 
     my subset Pattern of Hash where .<PatternType> ~~ 1|2;
     my subset TilingPattern of Pattern where .<PatternType> ~~ 1;
+    #| ensure pattern is declared as a resource
     method use-pattern(Pattern $pat!) {
         $pat.finish
             if $pat ~~ TilingPattern;
         :Pattern(self.resource-key($pat));
     }
 
+    #| fill and stroke the current path
     multi method paint(
         Bool :$fill,  Bool :$even-odd,
         Bool :$close, Bool :$stroke,
@@ -230,19 +280,44 @@ class PDF::Content:ver<0.6.5>
             for @paint-ops;
     }
 
+    #| build a path, then fill and stroke it
     multi method paint(&meth, *%o) {
         self.Save;
-        &meth(self);
+        self.&meth();
         my \rv = self.paint: |%o;
         self.Restore;
+        rv;
     }
 
     my subset MadeFont where {.does(PDF::Content::FontObj) || .?font-obj.defined}
+    multi sub make-font(PDF::Content::FontObj:D $_) { $_ }
+    #| associate a font dictionary with a font object
+    multi sub make-font(
+        PDF::COS::Dict:D() $dict where .<Type> ~~ 'Font'
+        --> PDF::COS::Dict
+    ) {
+        $dict.^mixin: PDF::Content::Font
+            unless $dict.does(PDF::Content::Font);
+        unless $dict.font-obj.defined {
+            my $font-loader = try PDF::COS.required("PDF::Font::Loader");
+            die "Content font loading is only supported if PDF::Font::Loader is installed"
+                if $font-loader === Any;
+
+            my Bool $core-font = $dict<Subtype> ~~ 'Type1'
+                             && ! $dict<FontDescriptor>.defined
+                             &&  PDF::Content::Font::CoreFont.core-font-name($dict<BaseFont>).defined;
+            $dict.make-font: $font-loader.load-font(:$dict, :$core-font);
+        }
+        $dict;
+    }
+
+    #| create a text box object for use in graphics .print() or .say() methods
     method text-box(
         ::?CLASS:D $gfx:
-        MadeFont:D :$font = self!current-font[0],
+        MadeFont:D :$font = make-font(self!current-font[0]),
         Numeric:D  :$font-size = $.font-size // self!current-font[1],
         *%opt,
+        --> PDF::Content::Text::Box
     ) is hidden-from-backtrace {
         PDF::Content::Text::Box.new(
             :$gfx, :$font, :$font-size, |%opt,
@@ -253,12 +328,13 @@ class PDF::Content:ver<0.6.5>
     multi method print(
         Str $text,
         *%opt,  # :$align, :$valign, :$kern, :$leading, :$width, :$height, :$baseline-shift, :$font, :$font-size
+        --> List
     ) {
         my $text-box = self.text-box( :$text, |%opt);
         @.print( $text-box, |%opt);
     }
 
-    #| deprecated in favour of text-box()
+    # deprecated in favour of text-box()
     method text-block(::?CLASS:D $gfx: $font = self!current-font[0], *%opt) is DEPRECATED('text-box') {
         my Numeric $font-size = $.font-size // self!current-font[1];
         PDF::Content::Text::Block.new(
@@ -266,19 +342,20 @@ class PDF::Content:ver<0.6.5>
         );
     }
 
-    method !set-position($text-block, $position,
-                         Bool :$left! is rw,
-                         Bool :$top! is rw) {
-        my $x;
+    method !set-position(
+        $text-block, $position,
+        Bool :$left! is rw,
+        Bool :$top! is rw) {
+        my Numeric $x;
         with $position[0] {
             when Numeric {$x = $_}
             when XPos-Pair {
-                my constant Dx = %( :left(0.0), :center(0.5), :right(1.0) );
+                my constant Dx = %( :left(0.0), :justify(0.0), :center(0.5), :right(1.0) );
                 $x = .value  +  Dx{.key} * $text-block.width;
                 $left = True; # position from left
             }
         }
-        my $y;
+        my Numeric $y;
         with $position[1] {
             when Numeric {$y = $_}
             when YPos-Pair {
@@ -291,28 +368,31 @@ class PDF::Content:ver<0.6.5>
         self.text-position = [$x, $y];
     }
 
+    #| get or set the current text position
     method text-position is rw returns Vector {
         warn '$.text-position accessor used outside of a text-block'
             unless $.context == GraphicsContext::Text;
 
-	Proxy.new(
-	    FETCH => {
+        Proxy.new(
+            FETCH => {
                 my @tm = @.TextMatrix;
-	        @tm[4] / @tm[0], @tm[5] / @tm[3];
-	    },
-	    STORE => -> $, Vector \v {
+                (@tm[4] + self.tf-x) / @tm[0], @tm[5] / @tm[3];
+            },
+            STORE => -> $, Vector \v {
                 my @tm = @.TextMatrix;
                 @tm[4] = $_ * @tm[0] with v[0];
                 @tm[5] = $_ * @tm[3] with v[1];
-		self.op(SetTextMatrix, @tm);
-	    },
-	);
+                self.op(SetTextMatrix, @tm);
+            },
+        );
     }
 
+    #| print a text block object
     multi method print(PDF::Content::Text::Box $text-box,
                        Position :$position,
                        Bool :$nl = False,
                        Bool :$preserve = True,
+                       --> List
         ) {
 
         my Bool $left = False;
@@ -331,14 +411,18 @@ class PDF::Content:ver<0.6.5>
         unless $.artifact {
             with $!actual-text {
                 # Pass agregated text back to callee e.g. PDF::Tags::Elem.mark()
-                $_ ~= ' ' if .so && !.ends-with(' '|"\n");
-                $_ ~= $text-box.text;
+                my $chunk = $text-box.text;
+                $chunk .= flip if $.reversed-chars;
+                $_ ~= ' '
+                    if .so
+                    && !(.ends-with(' '|"\n") || $chunk.starts-with(' '|"\n"));
+                $_ ~= $chunk;
                 $_ ~= "\n" if $nl;
             }
         }
 
         my \x0 = $x + $dx;
-        my \y0 = $y + $dy;
+        my \y0 = $y + $dy + $text-box.TextRise;
         my \x1 = x0 + $text-box.width;
         my \y1 = y0 + $text-box.height;
 
@@ -363,6 +447,7 @@ class PDF::Content:ver<0.6.5>
         $.Font // [$.core-font('Courier'), 16]
     }
 
+    #| Get or set the current font as ($font, $font-size)
     method font is rw returns Array {
         Proxy.new(
             FETCH => {
@@ -376,31 +461,40 @@ class PDF::Content:ver<0.6.5>
         );
     }
 
-    multi method print(Str $text, :$font = self!current-font[0], |c) {
+    #| print text to the content stream
+    multi method print(Str $text, :$font = self!current-font[0], |c --> List) {
         nextwith( $text, :$font, |c);
     }
 
-    multi method canvas(&mark-up!, |c ) is DEPRECATED<html-canvas> {
-        self.html-canvas(&mark-up, |c );
-    }
-
+    #| add graphics using HTML Canvas 2D API
     method html-canvas(&mark-up!, |c ) {
         my $html-canvas := PDF::COS.required('HTML::Canvas').new;
         $html-canvas.context(&mark-up);
         self.draw($html-canvas, |c);
     }
+    =para The HTML::Canvas::To::PDF Raku module must be installed to use this method
 
+    #| render an HTML canvas
     method draw(PDF::Content:D $gfx: $html-canvas, :$renderer, |c) {
         $html-canvas.render($renderer // PDF::COS.required('HTML::Canvas::To::PDF').new: :$gfx, |c);
     }
 
-    # map transformed user coordinates to untransformed (default) coordinates
-    use PDF::Content::Matrix :&dot;
-    method base-coords(*@coords where .elems %% 2, :$user = True, :$text = !$user) {
+    #| map transformed user coordinates to untransformed (default) coordinates
+    use PDF::Content::Matrix :&dot, :&inverse-dot;
+    method base-coords(*@coords where .elems %% 2, :$user = True, :$text = !$user --> Array) {
         (
-            @coords.map: -> $x is copy, $y is copy {
+            my @ = @coords.map: -> $x is copy, $y is copy {
                 ($x, $y) = $.TextMatrix.&dot($x, $y) if $text;
                 slip($user ?? $.CTM.&dot($x, $y) !! ($x, $y));
+            }
+        )
+    }
+    #| inverse of base-coords
+    method user-coords(*@coords where .elems %% 2, :$user = True, :$text = !$user --> Array) {
+        (
+            my @ = @coords.map: -> $x is copy, $y is copy {
+                ($x, $y) = $.CTM.&inverse-dot($x, $y) if $user;
+                slip($text ?? $.TextMatrix.&inverse-dot($x, $y) !! ($x, $y));
             }
         )
     }

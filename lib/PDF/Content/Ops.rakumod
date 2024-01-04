@@ -80,7 +80,96 @@ class X::PDF::Content::UnknownResource
     method message { "Unknown $!type resource: /$!key" }
 }
 
+#| A graphics machine for building and interpeting PDF Content operator streams
 class PDF::Content::Ops {
+
+=begin pod
+
+=head2 Description
+
+The PDF::Content::Ops role implements methods and mnemonics for the full operator table, as defined in specification [PDF 1.7 Appendix A]:
+
+=begin table
+* Operator * | *Mnemonic* | *Operands* | *Description*
+b | CloseFillStroke | — | Close, fill, and stroke path using nonzero winding number rule
+B | FillStroke | — | Fill and stroke path using nonzero winding number rule
+b* | CloseEOFillStroke | — | Close, fill, and stroke path using even-odd rule
+B* | EOFillStroke | — | Fill and stroke path using even-odd rule
+BDC | BeginMarkedContentDict | tag properties | (PDF 1.2) Begin marked-content sequence with property list
+BI | BeginImage | — | Begin inline image object
+BMC | BeginMarkedContent | tag | (PDF 1.2) Begin marked-content sequence
+BT | BeginText | — | Begin text object
+BX | BeginExtended | — | (PDF 1.1) Begin compatibility section
+c | CurveTo | x1 y1 x2 y2 x3 y3 | Append curved segment to path (two control points)
+cm | ConcatMatrix | a b c d e f | Concatenate matrix to current transformation matrix
+CS | SetStrokeColorSpace | name | (PDF 1.1) Set color space for stroking operations
+cs | SetFillColorSpace | name | (PDF 1.1) Set color space for nonstroking operations
+d | SetDashPattern | dashArray dashPhase | Set line dash pattern
+d0 | SetCharWidth | wx wy | Set glyph width in Type 3 font
+d1 | SetCharWidthBBox | wx wy llx lly urx ury | Set glyph width and bounding box in Type 3 font
+Do | XObject | name | Invoke named XObject
+DP | MarkPointDict | tag properties | (PDF 1.2) Define marked-content point with property list
+EI | EndImage | — | End inline image object
+EMC | EndMarkedContent | — | (PDF 1.2) End marked-content sequence
+ET | EndText | — | End text object
+EX | EndExtended | — | (PDF 1.1) End compatibility section
+f | Fill | — | Fill path using nonzero winding number rule
+F | FillObsolete | — | Fill path using nonzero winding number rule (obsolete)
+f* | EOFill | — | Fill path using even-odd rule
+G | SetStrokeGray | gray | Set gray level for stroking operations
+g | SetFillGray | gray | Set gray level for nonstroking operations
+gs | SetGraphicsState | dictName | (PDF 1.2) Set parameters from graphics state parameter dictionary
+h | ClosePath | — | Close subpath
+i | SetFlatness | flatness | Set flatness tolerance
+ID | ImageData | — | Begin inline image data
+j | SetLineJoin | lineJoin| Set line join style
+J | SetLineCap | lineCap | Set line cap style
+K | SetStrokeCMYK | c m y k | Set CMYK color for stroking operations
+k | SetFillCMYK | c m y k | Set CMYK color for nonstroking operations
+l | LineTo | x y | Append straight line segment to path
+m | MoveTo | x y | Begin new subpath
+M | SetMiterLimit | miterLimit | Set miter limit
+MP | MarkPoint | tag | (PDF 1.2) Define marked-content point
+n | EndPath | — | End path without filling or stroking
+q | Save | — | Save graphics state
+Q | Restore | — | Restore graphics state
+re | Rectangle | x y width height | Append rectangle to path
+RG | SetStrokeRGB | r g b | Set RGB color for stroking operations
+rg | SetFillRGB | r g b | Set RGB color for nonstroking operations
+ri | SetRenderingIntent | intent | Set color rendering intent
+s | CloseStroke | — | Close and stroke path
+S | Stroke | — | Stroke path
+SC | SetStrokeColor | c1 … cn | (PDF 1.1) Set color for stroking operations
+sc | SetFillColor | c1 … cn | (PDF 1.1) Set color for nonstroking operations
+SCN | SetStrokeColorN | c1 … cn [name] | (PDF 1.2) Set color for stroking operations (ICCBased and special color spaces)
+scn | SetFillColorN | c1 … cn [name] | (PDF 1.2) Set color for nonstroking operations (ICCBased and special color spaces)
+sh | ShFill | name | (PDF 1.3) Paint area defined by shading pattern
+T* | TextNextLine | — | Move to start of next text line
+Tc | SetCharSpacing| charSpace | Set character spacing
+Td | TextMove | tx ty | Move text position
+TD | TextMoveSet | tx ty | Move text position and set leading
+Tf | SetFont | font size | Set text font and size
+Tj | ShowText | string | Show text
+TJ | ShowSpaceText | array | Show text, allowing individual glyph positioning
+TL | SetTextLeading | leading | Set text leading
+Tm | SetTextMatrix | a b c d e f | Set text matrix and text line matrix
+Tr | SetTextRender | render | Set text rendering mode
+Ts | SetTextRise | rise | Set text rise
+Tw | SetWordSpacing | wordSpace | Set word spacing
+Tz | SetHorizScaling | scale | Set horizontal text scaling
+v | CurveToInitial | x2 y2 x3 y3 | Append curved segment to path (initial point replicated)
+w | SetLineWidth | lineWidth | Set line width
+W | Clip | — | Set clipping path using nonzero winding number rule
+W* | EOClip | — | Set clipping path using even-odd rule
+y | CurveToFinal | x1 y1 x3 y3 | Append curved segment to path (final point replicated)
+' | MoveShowText | string | Move to next line and show text
+" | MoveSetShowText | aw ac string | Set word and character spacing, move to next line, and show text
+
+=end table
+
+=head Methods
+
+=end pod
 
     use PDF::IO::Writer;
     use PDF::COS;
@@ -89,6 +178,7 @@ class PDF::Content::Ops {
     use PDF::Content::Matrix :inverse, :multiply, :is-identity, :TransformMatrix;
     use PDF::Content::Tag;
     use JSON::Fast;
+    use are;
 
     has Block @.callback is rw;
     has Pair  @.ops;
@@ -99,13 +189,12 @@ class PDF::Content::Ops {
     has Bool  $.trace   is rw = False;
     has Bool  $.strict  is rw = True;
     has $.canvas handles <resource-key resource-entry core-font use-font resources xobject-form tiling-pattern use-pattern width height> is required;
-    multi method canvas { $!canvas }
     method parent is DEPRECATED<canvas> { $!canvas }
     method owner  is DEPRECATED<canvas> { $!canvas }
     has UInt $.extended-ops = 0;
     has Numeric ($!cur-x, $!cur-y); # current point
+    has Numeric ($.tf-x = 0.0, $.tf-y = 0.0) is rw; # text flow
     has Numeric ($!close-x, $!close-y); # closepath end-point
-
     # some convenient mnemomic names
     my Str enum OpCode is export(:OpCode) «
         :BeginImage<BI> :ImageData<ID> :EndImage<EI>
@@ -185,17 +274,17 @@ class PDF::Content::Ops {
     »;
     constant %ExtGState = ExtGState.enums.Hash;
 
-    my Int enum TextMode is export(:TextMode) «
+    our Int enum TextMode is export(:TextMode) «
 	:FillText(0) :OutlineText(1) :FillOutlineText(2)
         :InvisableText(3) :FillClipText(4) :OutlineClipText(5)
         :FillOutlineClipText(6) :ClipText(7)
     »;
 
-    my Int enum LineCaps is export(:LineCaps) «
+    our Int enum LineCaps is export(:LineCaps) «
 	:ButtCaps(0) :RoundCaps(1) :SquareCaps(2)
     »;
 
-    my Int enum LineJoin is export(:LineJoin) «
+    our Int enum LineJoin is export(:LineJoin) «
 	:MiterJoin(0) :RoundJoin(1) :BevelJoin(2)
     »;
 
@@ -243,6 +332,7 @@ class PDF::Content::Ops {
     BEGIN %Store = (
         OpCode::BeginText|OpCode::EndText => method {
             @!TextMatrix = [ 1, 0, 0, 1, 0, 0, ];
+            $!tf-x = 0; $!tf-y = 0;
         },
         OpCode::Save => method {
             my %gstate := $.graphics-state;
@@ -335,6 +425,8 @@ class PDF::Content::Ops {
                     with .<LJ>   { $!LineJoin = $_ }
                     with .<LW>   { $!LineWidth = $_ }
                     with .<RI>   { $!RenderingIntent = $_ }
+                    with .<BM>   { $!BlendMode = $_ }
+                    with .<ML>   { $!MiterLimit = $_ }
                 }
                 else {
                     die X::PDF::Content::UnknownResource.new: :type<ExtGState>, :$key;
@@ -445,18 +537,20 @@ class PDF::Content::Ops {
     has Numeric $.TextLeading   is graphics is stored(method ($!TextLeading)  {}) is rw = 0;
     has Numeric $.TextRender    is graphics is stored(method ($!TextRender)   {}) is rw = 0;
     has Numeric $.TextRise      is graphics is stored(method ($!TextRise)     {}) is rw = 0;
-    has Numeric @.TextMatrix    is graphics is stored(method (*@!TextMatrix)  {}) is rw = [ 1, 0, 0, 1, 0, 0, ];
+    has Numeric @.TextMatrix    is graphics is stored(method (*@!TextMatrix)  {$!tf-x = 0; $!tf-y = 0;}) is rw = [ 1, 0, 0, 1, 0, 0, ];
     has Array   $.Font          is graphics is stored(
         method (Str $key, Numeric $size!) {
-            with $!canvas.resource-entry('Font', $key) -> \font-face {
-                $!Font = [font-face, $size];
+            with $!canvas.resource-entry('Font', $key) -> \font-dict {
+                $!Font = [font-dict, $size];
             }
             else {
                 die X::PDF::Content::UnknownResource.new: :type<Font>, :$key;
             }
-    }) is rw;
-    method font-face {$!Font[0]}
-    method font-size {$!Font[1]}
+        }) is rw;
+    #| returns the current graphics font dictionary resource
+    method font-face returns PDF::COS::Dict {$!Font[0] // PDF::COS::Dict}
+    #| returns the current graphics font size
+    method font-size returns Numeric {$!Font[1] // Numeric}
 
     # *** Graphics STATE ***
     has Numeric @.CTM is graphics = [ 1, 0, 0, 1, 0, 0, ];      # graphics matrix;
@@ -535,10 +629,13 @@ class PDF::Content::Ops {
     has FlatnessTolerance $.Flatness is graphics is stored(method ($!Flatness)  {}) is rw = 0;
 
     # *** Extended Graphics STATE ***
-    has $.StrokeAlpha is ext-graphics is rw = 1.0;
-    has $.FillAlpha   is ext-graphics is rw = 1.0;
+    has Numeric $.StrokeAlpha is ext-graphics is rw = 1.0;
+    has Numeric $.FillAlpha   is ext-graphics is rw = 1.0;
+    has Str $.BlendMode is ext-graphics is rw = 'Normal';
+    has Numeric $.MiterLimit is graphics is stored(method ($!MiterLimit) {}) is rw = 10.0;
 
-    method tags handles<open-tag close-tag add-tag open-tags closed-tag artifact descendants> {
+    #| returns the current tags status
+    method tags returns PDF::Content::Tag::NodeSet handles<open-tag close-tag add-tag open-tags closed-tag artifact reversed-chars descendants> {
         $!canvas.tags;
     }
 
@@ -556,17 +653,20 @@ class PDF::Content::Ops {
     }
 
     has @.gsaves;
-    multi method gsaves(:$delta! where .so) {
+    #| return graphics gsave stack, including changed variables only
+    multi method gsaves(:$delta! where .so --> Array) {
         my @gs = @!gsaves;
         @gs.push: $.graphics-state;
         delta(@gs);
     }
-    multi method gsaves { @!gsaves }
+    #| return graphics gsave stack, including all graphics variables
+    multi method gsaves returns Array { @!gsaves }
 
     # looks too much like a verb
     method gsave is DEPRECATED('gsaves') { @!gsaves }
 
-    multi method graphics-state(:$delta!) {
+    #| return locally updated graphics state variables
+    multi method graphics-state(:$delta! --> Hash) {
         with @!gsaves.tail {
             delta([$_, $.graphics-state]).tail;
         }
@@ -574,6 +674,7 @@ class PDF::Content::Ops {
             Nil;
         }
     }
+    #| return all current graphics state variables
     multi method graphics-state {
         %(
             %GraphicVars.pairs.map: {
@@ -597,7 +698,35 @@ class PDF::Content::Ops {
 
     has GraphicsContext $.context = Page;
 
-    method !track-context(Str $op) {
+    method !unexpected-op($op) is hidden-from-backtrace {
+        # Found an op we didn't expect. Raise a warning.
+        my $type;
+        my $where;
+        if $!context == Text && $op ∈ SpecialGraphicOps {
+            $type = 'special graphics';
+            $where = 'in a BT ... ET text block';
+        }
+        elsif $op ∈ TextOps {
+            $type = 'text operation';
+            $where = 'outside of a BT ... ET text block';
+        }
+        else {
+            $type = 'unexpected';
+            $where = '(first operation)';
+
+            loop (my int $n = +@!ops-2; $n >= 0; $n--) {
+                with @!ops[$n].key {
+                    unless $_ ~~ 'comment' {
+                        $where = "in $!context context, following '$_' (%OpName{$_})";
+                        last;
+                    }
+                }
+            }
+        }
+        warn X::PDF::Content::OP::Unexpected.new: :$type, :$op, :mnemonic(%OpName{$op}), :$where;
+    }
+
+    method !track-context(Str $op) is hidden-from-backtrace {
 
         my constant %Transition = %(
             'BT'     => ( (Page) => Text ),
@@ -618,8 +747,8 @@ class PDF::Content::Ops {
            (Image) => <ID>.Set,
         );
 
-        my Bool $ok-here = False;
         my $rv = $!context;
+        my Bool $ok-here = False;
         $ok-here = $op ∈ $_
             with %InSitu{$!context};
 
@@ -628,33 +757,9 @@ class PDF::Content::Ops {
             $rv = .value;
         }
 
-        if !$ok-here && $!strict {
-            # Found an op we didn't expect. Raise a warning.
-            my $type;
-            my $where;
-            if $rv == Text && $op ∈ SpecialGraphicOps {
-                $type = 'special graphics';
-                $where = 'in a BT ... ET text block';
-            }
-            elsif $op ∈ TextOps {
-                $type = 'text operation';
-                $where = 'outside of a BT ... ET text block';
-            }
-            else {
-                $type = 'unexpected';
-                $where = '(first operation)';
+        self!unexpected-op($op)
+            if !$ok-here && $!strict;
 
-                loop (my int $n = +@!ops-2; $n >= 0; $n--) {
-                    with @!ops[$n].key {
-                        unless $_ ~~ 'comment' {
-                            $where = "in $!context context, following '$_' (%OpName{$_})";
-                            last;
-                        }
-                    }
-                }
-            }
-            warn X::PDF::Content::OP::Unexpected.new: :$type, :$op, :mnemonic(%OpName{$op}), :$where;
-        }
         $rv;
     }
 
@@ -853,7 +958,8 @@ class PDF::Content::Ops {
         $op-name ∈ GraphicsOps;
     }
 
-    my subset Vector of List is export(:Vector) where {.elems == 2 && all(.list) ~~ Numeric}
+    my subset Vector of List is export(:Vector) where {.elems == 2 && .&are ~~ Numeric}
+    #| return current point
     method current-point is rw returns Vector {
         Proxy.new(
             FETCH => {
@@ -868,13 +974,15 @@ class PDF::Content::Ops {
             }
         );
     }
+    =para This method is only valid in a path context
+
+    #| process operator quarantined by PDF::Grammar::Content as either an unknown operator
+    #| or having an incorrect argument list
     multi method op(SuspectOp $_) {
-        # quarantined by PDF::Grammar::Content as either an unknown operator
-        # or having an incorrect argument list
         given .value {
             my $op = .key;
             if %OpName{$op}:exists {
-                # known opereator with incorrect arguments
+                # known operator with incorrect arguments
                 my @args = .value.map(&from-ast);
                 die X::PDF::Content::OP::BadArgs.new: :$op, :@args, :mnemonic(%OpName{$op}) ;
             }
@@ -891,6 +999,7 @@ class PDF::Content::Ops {
         }
     }
 
+    #| Process a parsed graphics operation
     multi method op(*@args is copy) {
         $!content-cache = Nil;
         my \opn = op(|@args);
@@ -910,7 +1019,7 @@ class PDF::Content::Ops {
             # block. makes it harder to later edit/reuse this content stream
             # and may upset downstream utilities
             warn X::PDF::Content::OP::Unexpected.new: :$op, :mnemonic(%OpName{$op}), :type('graphics operator'), :where("outside of a 'q' ... 'Q' (Save .. Restore) graphics block");
-	}
+        }
 
         if $op ~~ 'comment' {
             note '% ' ~ opn if $!trace && ! $!comment;
@@ -969,6 +1078,7 @@ class PDF::Content::Ops {
             when 'd0'          { %(:$!char-width, :$!char-height) }
             when 'd1'          { %(:$!char-width, :$!char-height, :@!char-bbox) }
             when 'Q'|'gs'      { $.graphics-state(:delta); }
+            when 'cm'          { %( :@!CTM ) }
             default {
                 my $value = Nil;
                 my $op-name := %OpName{$op};
@@ -1005,11 +1115,13 @@ class PDF::Content::Ops {
         note $str ~ self!show-updates($op);
     }
 
-    multi method ops(Str $ops!) {
+    #| Parse and process graphics operations
+    multi method ops(Str $ops! --> Array) {
 	$.ops(self.parse($ops));
     }
 
-    multi method ops(List $ops?) {
+    #| Parse and process a list of graphics operations
+    multi method ops(List $ops? --> Array) {
 	with $ops {
 	    self.op($_)
 		for .list
@@ -1017,10 +1129,12 @@ class PDF::Content::Ops {
         @!ops;
     }
 
+    #| Add a comment to the content stream
     method add-comment(Str $_) {
         @!ops.push: (:comment[$_]);
     }
 
+    #| parse, but don't process PDF content operators
     method parse(Str $content) {
 	use PDF::Grammar::Content::Fast;
 	use PDF::Grammar::Content::Actions;
@@ -1051,6 +1165,7 @@ class PDF::Content::Ops {
     }
 
     method !text-move(Numeric $tx, Numeric $ty) {
+        $!tf-x = 0.0; $!tf-y = 0.0;
         @!TextMatrix = [1, 0, 0, 1, $tx, $ty].&multiply: @!TextMatrix;
     }
 
@@ -1058,6 +1173,7 @@ class PDF::Content::Ops {
         self!text-move(0, - $!TextLeading);
     }
 
+    #| Finish a content stream
     method finish is hidden-from-backtrace {
 	die X::PDF::Content::Unclosed.new: :message("Unclosed tags {@.open-tags».gist.join: ' '} at end of content stream")
 	    if @.open-tags;
@@ -1094,8 +1210,8 @@ class PDF::Content::Ops {
 	}).join: "\n";
     }
 
-    # serialized current content as a sequence of strings - for debugging/testing
-    method content-dump {
+    #| serialized current content as a sequence of strings - for debugging/testing
+    method content-dump returns Seq {
         my PDF::IO::Writer $writer .= new;
         @!ops.map: { $writer.write-content($_) };
     }
@@ -1111,103 +1227,16 @@ class PDF::Content::Ops {
         self.op(OpCode::SetDashPattern, $args, $phase);
     }
     #-- avoid flattening issues on lists
-    method FALLBACK(\name, |c) {
-        with %OpCode{name} -> \op {
+    #| Treat operator mnemonics as methods
+    method FALLBACK($method, |c) {
+        with %OpCode{$method} -> \op-code {
             # e.g. $.Restore :== $.op('Q', [])
-            self.op(op, |c);
+            self.op(op-code, |c);
         }
         else {
-            die X::Method::NotFound.new( :method(name), :typename(self.^name) );
+            my $typename := self.^name;
+            die X::Method::NotFound.new: :$method, :$typename;
         }
     }
 }
 
-=begin pod
-
-=head1 NAME
-
-PDF::Content::Ops
-
-=head1 DESCRIPTION
-
-The PDF::Content::Ops role implements methods and mnemonics for the full operator table, as defined in specification [PDF 1.7 Appendix A]:
-
-=begin table
-* Operator * | *Mnemonic* | *Operands* | *Description*
-b | CloseFillStroke | — | Close, fill, and stroke path using nonzero winding number rule
-B | FillStroke | — | Fill and stroke path using nonzero winding number rule
-b* | CloseEOFillStroke | — | Close, fill, and stroke path using even-odd rule
-B* | EOFillStroke | — | Fill and stroke path using even-odd rule
-BDC | BeginMarkedContentDict | tag properties | (PDF 1.2) Begin marked-content sequence with property list
-BI | BeginImage | — | Begin inline image object
-BMC | BeginMarkedContent | tag | (PDF 1.2) Begin marked-content sequence
-BT | BeginText | — | Begin text object
-BX | BeginExtended | — | (PDF 1.1) Begin compatibility section
-c | CurveTo | x1 y1 x2 y2 x3 y3 | Append curved segment to path (two control points)
-cm | ConcatMatrix | a b c d e f | Concatenate matrix to current transformation matrix
-CS | SetStrokeColorSpace | name | (PDF 1.1) Set color space for stroking operations
-cs | SetFillColorSpace | name | (PDF 1.1) Set color space for nonstroking operations
-d | SetDashPattern | dashArray dashPhase | Set line dash pattern
-d0 | SetCharWidth | wx wy | Set glyph width in Type 3 font
-d1 | SetCharWidthBBox | wx wy llx lly urx ury | Set glyph width and bounding box in Type 3 font
-Do | XObject | name | Invoke named XObject
-DP | MarkPointDict | tag properties | (PDF 1.2) Define marked-content point with property list
-EI | EndImage | — | End inline image object
-EMC | EndMarkedContent | — | (PDF 1.2) End marked-content sequence
-ET | EndText | — | End text object
-EX | EndExtended | — | (PDF 1.1) End compatibility section
-f | Fill | — | Fill path using nonzero winding number rule
-F | FillObsolete | — | Fill path using nonzero winding number rule (obsolete)
-f* | EOFill | — | Fill path using even-odd rule
-G | SetStrokeGray | gray | Set gray level for stroking operations
-g | SetFillGray | gray | Set gray level for nonstroking operations
-gs | SetGraphicsState | dictName | (PDF 1.2) Set parameters from graphics state parameter dictionary
-h | ClosePath | — | Close subpath
-i | SetFlatness | flatness | Set flatness tolerance
-ID | ImageData | — | Begin inline image data
-j | SetLineJoin | lineJoin| Set line join style
-J | SetLineCap | lineCap | Set line cap style
-K | SetStrokeCMYK | c m y k | Set CMYK color for stroking operations
-k | SetFillCMYK | c m y k | Set CMYK color for nonstroking operations
-l | LineTo | x y | Append straight line segment to path
-m | MoveTo | x y | Begin new subpath
-M | SetMiterLimit | miterLimit | Set miter limit
-MP | MarkPoint | tag | (PDF 1.2) Define marked-content point
-n | EndPath | — | End path without filling or stroking
-q | Save | — | Save graphics state
-Q | Restore | — | Restore graphics state
-re | Rectangle | x y width height | Append rectangle to path
-RG | SetStrokeRGB | r g b | Set RGB color for stroking operations
-rg | SetFillRGB | r g b | Set RGB color for nonstroking operations
-ri | SetRenderingIntent | intent | Set color rendering intent
-s | CloseStroke | — | Close and stroke path
-S | Stroke | — | Stroke path
-SC | SetStrokeColor | c1 … cn | (PDF 1.1) Set color for stroking operations
-sc | SetFillColor | c1 … cn | (PDF 1.1) Set color for nonstroking operations
-SCN | SetStrokeColorN | c1 … cn [name] | (PDF 1.2) Set color for stroking operations (ICCBased and special color spaces)
-scn | SetFillColorN | c1 … cn [name] | (PDF 1.2) Set color for nonstroking operations (ICCBased and special color spaces)
-sh | ShFill | name | (PDF 1.3) Paint area defined by shading pattern
-T* | TextNextLine | — | Move to start of next text line
-Tc | SetCharSpacing| charSpace | Set character spacing
-Td | TextMove | tx ty | Move text position
-TD | TextMoveSet | tx ty | Move text position and set leading
-Tf | SetFont | font size | Set text font and size
-Tj | ShowText | string | Show text
-TJ | ShowSpaceText | array | Show text, allowing individual glyph positioning
-TL | SetTextLeading | leading | Set text leading
-Tm | SetTextMatrix | a b c d e f | Set text matrix and text line matrix
-Tr | SetTextRender | render | Set text rendering mode
-Ts | SetTextRise | rise | Set text rise
-Tw | SetWordSpacing | wordSpace | Set word spacing
-Tz | SetHorizScaling | scale | Set horizontal text scaling
-v | CurveToInitial | x2 y2 x3 y3 | Append curved segment to path (initial point replicated)
-w | SetLineWidth | lineWidth | Set line width
-W | Clip | — | Set clipping path using nonzero winding number rule
-W* | EOClip | — | Set clipping path using even-odd rule
-y | CurveToFinal | x1 y1 x3 y3 | Append curved segment to path (final point replicated)
-' | MoveShowText | string | Move to next line and show text
-" | MoveSetShowText | aw ac string | Set word and character spacing, move to next line, and show text
-
-=end table
-
-=end pod

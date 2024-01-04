@@ -1,7 +1,7 @@
 
 #| A graphical content container such as a page, xobject form, or pattern
 unit role PDF::Content::Canvas;
-#= this role is applied to PDF::Content::Type::Page, PDF::Content::Type::Pattern and PDF::Content::Type::XObject::Form
+=para this role is applied to L<PDF::Content::Page> and L<PDF::Content::XObject>C<['Form']>.
 
 use PDF::Content::Resourced;
 also does PDF::Content::Resourced;
@@ -12,28 +12,35 @@ use PDF::Content::Ops :OpCode;
 use PDF::Content::Tag;
 use PDF::COS::Stream;
 use PDF::COS::Name;
+use PDF::Content::XObject;
 sub name($_) { PDF::COS::Name.COERCE: $_ }
 
-has PDF::Content $!pre-gfx; #| prepended graphics
-method has-pre-gfx { ? .ops with $!pre-gfx }
-method pre-gfx { $!pre-gfx //= PDF::Content.new( :canvas(self) ) }
-method pre-graphics(&code) { self.pre-gfx.graphics( &code ) }
 has PDF::Content $!gfx;     #| appended graphics
+#| return appended PDF content stream
+method gfx(::?ROLE:D $canvas: |c --> PDF::Content) handles<html-canvas graphics text> {
+    $!gfx //= PDF::Content.new: :$canvas, |c
+}
+
+has PDF::Content $!pre-gfx;
+method has-pre-gfx returns Bool { ? (.ops with $!pre-gfx) }
+#| return prepended graphics
+method pre-gfx returns PDF::Content { $!pre-gfx //= PDF::Content.new( :canvas(self) ) }
+method pre-graphics(&code) { self.pre-gfx.graphics( &code ) }
 has Bool $!rendered = False;
 has UInt $.mcid = 0;
 method use-mcid(UInt:D $_) {
     $!mcid = $_ unless $!mcid >= $_;
 }
-method next-mcid { $!mcid++ }
+#| Allocate the next MCID (Marked Content Identifier)
+method next-mcid returns UInt:D { $!mcid++ }
 
 method canvas(&code) is DEPRECATED<html-canvas> { self.html-canvas(&code) }
-method html-canvas(&code) { self.gfx.html-canvas( &code ) }
 
-#| Fix nesting issues that aren't illegal, but could cause problems:
-#| - append any missing 'Q' (Restore) operators at end of stream
-#| - wrap with 'q' (Save) and 'Q' (Restore) operators, if there
-#|   are any top-level graphics, which may affect the state.
-method !tidy(@ops) {
+# Fix nesting issues that aren't illegal, but could cause problems:
+# - append any missing 'Q' (Restore) operators at end of stream
+# - wrap with 'q' (Save) and 'Q' (Restore) operators, if there
+#   are any top-level graphics, which may affect the state.
+method !tidy(@ops --> Array) {
     my int $nesting = 0;
     my $wrap = False;
 
@@ -59,16 +66,7 @@ method !tidy(@ops) {
     @ops;
 }
 
-method gfx(|c) {
-    $!gfx //= self.new-gfx(|c);
-}
-method graphics(&code) { self.gfx.graphics( &code ) }
-method text(&code)     { self.gfx.text( &code ) }
-
-method contents-parse {
-    PDF::Content.parse($.contents);
-}
-
+#| return contents
 method contents returns Str {
     with $.decoded {
        .isa(Str) ?? $_ !! .Str;
@@ -78,11 +76,17 @@ method contents returns Str {
     }
 }
 
-method new-gfx(::?ROLE:D $canvas: |c) {
+#| reparse contents
+method contents-parse {
+    PDF::Content.parse($.contents);
+}
+
+method new-gfx(::?ROLE:D $canvas: |c) is DEPRECATED {
     PDF::Content.new: :$canvas, |c;
 }
 
-method render(Bool :$tidy = True, |c) {
+#| render graphics
+method render(Bool :$tidy = True, |c --> PDF::Content) {
     my $gfx := $.gfx(|c);
     $!rendered ||= do {
         my Pair @ops = self.contents-parse;
@@ -94,6 +98,7 @@ method render(Bool :$tidy = True, |c) {
     $gfx;
 }
 
+#| finish for serialization purposes
 method finish is hidden-from-backtrace {
     if $!gfx.defined || $!pre-gfx.defined {
         # rebuild graphics, if they've been accessed
@@ -117,7 +122,7 @@ method finish is hidden-from-backtrace {
 method cb-finish is hidden-from-backtrace { $.finish }
 
 #| create a child XObject Form
-method xobject-form(:$group = True, *%dict) {
+method xobject-form(:$group = True, *%dict --> PDF::Content::XObject) {
     %dict<Type> = name 'XObject';
     %dict<Subtype> = name 'Form';
     %dict<Resources> //= {};
@@ -135,6 +140,7 @@ method tiling-pattern(List    :$BBox!,
                       Int :$TilingType = 1,
                       Hash :$Resources = {},
                       *%dict
+                      --> PDF::Content::XObject
                      ) {
     %dict.push: $_
                  for (:Type(name 'Pattern'), :PatternType(1),
@@ -143,29 +149,35 @@ method tiling-pattern(List    :$BBox!,
     PDF::COS::Stream.COERCE: { :%dict };
 }
 my subset ImageFile of Str where /:i '.'('png'|'svg'|'pdf') $/;
+
+#| draft rendering via Cairo (experimental)
 method save-as-image(ImageFile $outfile, |c) {
-    # experimental draft rendering via Cairo
     (try require PDF::To::Cairo) !=== Nil
          or die "save-as-image method is only supported if PDF::To::Cairo is installed";
     ::('PDF::To::Cairo').save-as-image(self, $outfile, |c);
 }
+=para The L<PDF::To::Cairo> module must be installed to use this method
+
 # *** Marked Content Tags ***
-my class TagSetBuilder is PDF::Content::Tag::Set {
+my class TagSetBuilder is PDF::Content::Tag::NodeSet {
     has PDF::Content::Tag @.open-tags;            # currently open descendant tags
     has PDF::Content::Tag $.closed-tag;
     has UInt $.artifact is built;
+    has UInt $.reversed-chars is built;
 
     method open-tag(PDF::Content::Tag $tag) {     # open a new descendant
         $!artifact++ if $tag.name eq 'Artifact';
+        $!reversed-chars++ if $tag.name eq 'ReversedChars';
         with @!open-tags.tail {
             .add-kid: $tag;
         }
         @!open-tags.push: $tag;
     }
 
-    method close-tag {                            # close innermost descendant
+    method close-tag returns PDF::Content::Tag {                            # close innermost descendant
         $!closed-tag = @!open-tags.pop;
         $!artifact-- if $!closed-tag.name eq 'Artifact';
+        $!reversed-chars-- if $!closed-tag.name eq 'ReversedChars';
         @.tags.push: $!closed-tag
             without $!closed-tag.parent;
         $!closed-tag;
@@ -180,4 +192,5 @@ my class TagSetBuilder is PDF::Content::Tag::Set {
         }
     }
 }
+#| snapshot of previous, and currently open tags
 has TagSetBuilder $.tags .= new();

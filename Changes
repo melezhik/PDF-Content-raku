@@ -1,5 +1,76 @@
 {{$NEXT}}
 
+0.7.3  2024-01-02T07:45:29+13:00
+   - Add core-font shape method with ligatures and kerning.
+   - Add PDF::Content::Font::Encoder interface role
+
+0.7.2  2023-10-17T06:40:11+13:00
+   - Fix local-glyph-name return value. Was causing regressions
+     in PDF::To::Cairo
+
+0.7.1  2023-09-17T08:37:57+12:00
+   - Fix Canvas `has-pre-gfx()` return value. Was causing regressions
+     in PDF::Font::Loader.
+   - Refactor text-box text positioning calculations
+
+0.7.0  2023-09-11T08:09:51+12:00
+   - Tone down text-box :valign to only affect the text flow of multi-
+     line text boxes. This removes the overlap with :baseline-shift.
+     They no longer combine to allow shifting of Text boxes by up to
+     two lines #16
+
+0.6.16  2023-09-08T08:29:55+12:00
+   - Make text-box text() method a rw accessor
+   - Fix text box rendering x, y returned position
+   - Fix text flow with horizontal and vertical alignment
+
+0.6.15  2023-08-26T07:00:47+12:00
+   - Breakup README.md add source-level POD. Add Makefile with 'doc'
+     target to build markdown under 'docs/' directory
+   - Add return constraints to methods/subs (mostly to improve POD)
+
+0.6.14  2023-08-02T15:25:37+12:00
+   - Exclude invisible text from text-flow calculations
+
+0.6.13  2023-08-02T13:02:41+12:00
+   - Fixes to return positional values of Graphics .print and .say methods:
+     my ($x0, $y0, $x1, $y1) = $gfx.print("text");
+     -- Track and take account of current text flow in computing $x0, $x1:
+        This is only an issue if the text is continuing the current line
+     -- Add any :$baseline offset to $y0, $y1.
+
+0.6.12  2023-06-30T07:17:24+12:00
+   - Export PDF::Content::Font::Enc::Type1 :Type1EncodingScheme
+   - Fix over-generalised caching of fonts
+
+0.6.11  2023-06-29T08:23:35+12:00
+   - Add PDF::Content user-coords() method. This is the inverse of
+     the existing base-coords() method.
+   - Added automatic font object loading from the content stream. See
+     tests in t/text-box.t. Also requires PDF::Font::Loader.
+   - Added type() and encoding() methods to core fonts for improved
+     compatibility with PDF::Font::Loader::FontObj objects.
+
+0.6.10  2023-03-15T07:04:53+13:00
+   - Add PDF::Content::API role. A set of base methods for
+     content APIs (PDF::Class, PDF::Lite).
+   - Make to-landscape() available as an exportable sub
+
+0.6.9  2022-11-28T07:27:39+13:00
+   - Fix font over-encoding of glyphs not actually present in
+     particular core fonts,
+   - Restore backwards compatibility to Rakudo 2011.12
+
+0.6.8  2022-11-24T09:55:04+13:00
+   - Handle /ReversedChars tags in content stream.
+   - Fix setting text-position, when only X is specified.
+
+0.6.7  2022-08-03T08:36:45+12:00
+   - Added MiterLimit and BlendMode graphics variables
+
+0.6.6  2022-07-26T16:44:19+12:00
+   - Fix page to-object() form construction
+
 0.6.5  2022-07-03T07:54:38+12:00
    - Protect a potential race in setting font encoding
    - Revert loading of tag dictionaries from 0.6.4 release

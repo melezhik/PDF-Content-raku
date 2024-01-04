@@ -6,10 +6,11 @@
   "build-depends": [
   ],
   "depends": [
+    "are",
     "Base64::Native",
     "Color",
     "Compress::Zlib::Raw",
-    "Font::AFM:ver<1.24.6+>",
+    "Font::AFM:ver<1.24.9+>",
     "Native::Packing",
     "Method::Also",
     "JSON::Fast",
@@ -22,12 +23,14 @@
   "perl": "6.*",
   "provides": {
     "PDF::Content": "lib/PDF/Content.rakumod",
+    "PDF::Content::API": "lib/PDF/Content/API.rakumod",
     "PDF::Content::Canvas": "lib/PDF/Content/Canvas.rakumod",
     "PDF::Content::Color": "lib/PDF/Content/Color.rakumod",
     "PDF::Content::Font": "lib/PDF/Content/Font.rakumod",
     "PDF::Content::Font::CoreFont": "lib/PDF/Content/Font/CoreFont.rakumod",
     "PDF::Content::Font::Enc::Glyphic": "lib/PDF/Content/Font/Enc/Glyphic.rakumod",
     "PDF::Content::Font::Enc::Type1": "lib/PDF/Content/Font/Enc/Type1.rakumod",
+    "PDF::Content::Font::Encoder": "lib/PDF/Content/Font/Encoder.rakumod",
     "PDF::Content::Font::Encodings": "lib/PDF/Content/Font/Encodings.rakumod",
     "PDF::Content::FontObj": "lib/PDF/Content/FontObj.rakumod",
     "PDF::Content::Image": "lib/PDF/Content/Image.rakumod",
@@ -58,5 +61,5 @@
   ],
   "test-depends": [
   ],
-  "version": "0.6.5"
+  "version": "0.7.3"
 }

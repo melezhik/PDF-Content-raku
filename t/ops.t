@@ -1,6 +1,6 @@
 use v6;
 use Test;
-plan 113;
+plan 126;
 
 use lib 't';
 use PDF;
@@ -167,15 +167,34 @@ $g.Restore;
 is $g.RenderingIntent, 'RelativeColorimetric', 'RenderingIntent, restored';
 is $g.Flatness, 0, 'Flatness, restored';
 
+
+
+$g.Save;
+is $g.BlendMode, 'Normal', 'initial BlendMode';
+lives-ok {$g.BlendMode = 'Multiply'}, 'BlendMode proxy';
+is $g.BlendMode,'Multiply', 'get BlendMode';
+$g.Restore;
+is $g.BlendMode, 'Normal', 'restored BlendMode';
+
+$g.Save;
+is $g.MiterLimit, 10.0, 'default MiterLimit';
+lives-ok {$g.MiterLimit = 7.5}, 'MiterLimit proxy';
+is $g.MiterLimit, 7.5, 'get MiterLimit';
+lives-ok {$g.SetMiterLimit(5.0)}, 'SetMiterLimit';
+is $g.MiterLimit, 5.0, 'get MiterLimit';
+$g.Restore;
+is $g.MiterLimit, 10.0, 'restored BlendMode';
+
 $g .= new: :$canvas;
 
 $g.ops("175 720 m 175 700 l 300 800 400 720 v h S");
-is-json-equiv $g.ops, [:m[175, 720],
-                       :l[175, 700],
-                       :v[300, 800, 400, 720],
-                       :h[],
-                       :S[],
-    ], 'basic parse';
+is-json-equiv $g.ops, [
+    :m[175, 720],
+    :l[175, 700],
+    :v[300, 800, 400, 720],
+    :h[],
+    :S[],
+], 'basic parse';
 
 my $image-block = 'BI                  % Begin inline image object
     /W 17           % Width in samples
@@ -270,12 +289,18 @@ $g.ConcatMatrix(1,0,0,1,75,-25,);
 is-deeply [ $g.CTM.list ], [2, 0, 0, 2, 150, 742], "chained matrix transforms";
 $g.text: {
     .text-position = 5, 10;
+
     ($x, $y) = $g.base-coords(80, -100);
     is-deeply ($x, $y), (310, 542), 'graphics to base user coordinates';
+    is-deeply $g.user-coords($x, $y).List, (80.0, -100.0);
+
     ($x, $y) = $g.base-coords(80, -100, :text);
     is-deeply ($x, $y), (320, 562), 'graphics+text to base user coordinates, :text';
+    is-deeply $g.user-coords($x, $y, :text).List, (80.0, -100.0);
+
     ($x, $y) = $g.base-coords(80, -100, :!user);
     is-deeply ($x, $y), (85, -90), 'text to graphics coordinates';
+    is-deeply $g.user-coords($x, $y, :!user).List, (80.0, -100.0);
 }
 $g.Restore;
 
